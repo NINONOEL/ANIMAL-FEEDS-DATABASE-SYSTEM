@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Icon } from '@iconify/react';
 import Modal from '../ui/Modal';
 import { PROVINCES, MUNICIPALITIES, BARANGAYS, NATURE_OF_BUSINESS_TYPES } from '../../data/constants';
@@ -50,6 +50,46 @@ function Field({ label, required, error, children }) {
 const base = { border:`1px solid ${C.p3}`, background:C.white, color:C.text, outline:'none' };
 const err  = { border:`1px solid ${C.p1}` };
 const sel  = { ...base, background:C.bg };
+
+function DateField({ value, onChange, className, style }) {
+  const ref      = useRef(null);
+  const isOpen   = useRef(false);
+
+  const toggle = () => {
+    if (isOpen.current) {
+      ref.current?.blur();
+    } else {
+      ref.current?.showPicker();
+    }
+  };
+
+  return (
+    <div className="relative w-full">
+      <input
+        ref={ref}
+        type="date"
+        value={value}
+        onChange={onChange}
+        onFocus={() => { isOpen.current = true; }}
+        onBlur={()  => { isOpen.current = false; }}
+        onClick={toggle}
+        className={`${className} date-field-hide-icon`}
+        style={style}
+        onKeyDown={e => e.preventDefault()}
+      />
+      <button
+        type="button"
+        onMouseDown={e => e.preventDefault()}
+        onClick={toggle}
+        className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center w-7 h-7 rounded-md"
+        style={{ color: C.p1 }}
+      >
+        <Icon icon="mdi:calendar-month" className="text-lg" />
+      </button>
+    </div>
+  );
+}
+
 
 export default function RecordForm({ isOpen, onClose, onSave, initialData, isEditing }) {
   const [form,setForm]     = useState(EMPTY);
@@ -138,12 +178,26 @@ export default function RecordForm({ isOpen, onClose, onSave, initialData, isEdi
               {label:'Barangay',     key:'brgy',         required:true, opts:brgys.map(b=>({v:b,l:b})),           disabled:!form.municipality },
             ].map(f=>(
               <Field key={f.key} label={f.label} required={f.required} error={errors[f.key]}>
-                <select value={form[f.key]} onChange={e=>set(f.key,e.target.value)}
-                  disabled={f.disabled} className={`${cls} disabled:opacity-50`}
-                  style={{...sel,...(errors[f.key]?err:{})}}>
-                  <option value="">Select {f.label}</option>
-                  {f.opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-                </select>
+                {f.key === 'brgy' ? (
+                  <>
+                    <input
+                      type="text"
+                      value={form.brgy}
+                      onChange={e=>set('brgy',e.target.value)}
+                      placeholder={`Enter ${f.label}`}
+                      disabled={f.disabled}
+                      className={`${cls} disabled:opacity-50`}
+                      style={{...base,...(errors[f.key]?err:{})}}
+                    />
+                  </>
+                ) : (
+                  <select value={form[f.key]} onChange={e=>set(f.key,e.target.value)}
+                    disabled={f.disabled} className={`${cls} disabled:opacity-50`}
+                    style={{...sel,...(errors[f.key]?err:{})}}>
+                    <option value="">Select {f.label}</option>
+                    {f.opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                  </select>
+                )}
               </Field>
             ))}
 
@@ -192,8 +246,8 @@ export default function RecordForm({ isOpen, onClose, onSave, initialData, isEdi
             </Field>
 
             <Field label="OR Date">
-              <input type="date" value={form.orDate} onChange={e=>set('orDate',e.target.value)}
-                className={cls} style={base} />
+              <DateField value={form.orDate} onChange={e=>set('orDate',e.target.value)}
+                className={cls} style={{...base, paddingRight:'44px'}} />
             </Field>
 
             <Field label="Fee (₱)">
@@ -227,15 +281,10 @@ export default function RecordForm({ isOpen, onClose, onSave, initialData, isEdi
               </div>
             </Field>
 
-            <div className="md:col-span-2">
+            <div>
               <Field label="Validity">
-                <input
-                  type="date"
-                  value={form.validity}
-                  onChange={e=>set('validity',e.target.value)}
-                  className={cls}
-                  style={base}
-                />
+                <DateField value={form.validity} onChange={e=>set('validity',e.target.value)}
+                  className={cls} style={{...base, paddingRight:'44px'}} />
                 <p className="text-[10px] mt-0.5" style={{ color:C.p2 }}>Default: December 31 annually</p>
               </Field>
             </div>
@@ -295,3 +344,20 @@ function normalizeDateInput(value) {
   const d = String(parsed.getDate()).padStart(2, '0');
   return `${y}-${mo}-${d}`;
 }
+
+function parseDateInputToDate(value) {
+  if (!value) return null;
+  const normalized = normalizeDateInput(value);
+  if (!normalized) return null;
+  const [y, m, d] = normalized.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function formatDateForInput(date) {
+  if (!date) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+

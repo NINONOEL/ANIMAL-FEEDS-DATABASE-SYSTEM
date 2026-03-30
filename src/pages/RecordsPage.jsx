@@ -128,6 +128,7 @@ export default function RecordsPage() {
   const [viewRecord,setViewRecord]                     = useState(null);
   const [viewOpen,setViewOpen]                         = useState(false);
   const [deleteId,setDeleteId]                         = useState(null);
+  const [isDeleting,setIsDeleting]                    = useState(false);
 
   const munis = filterProvince ? (MUNICIPALITIES[filterProvince]||[]) : [];
 
@@ -162,9 +163,11 @@ export default function RecordsPage() {
     }
   }
   async function handleDelete() {
+    if (!deleteId || isDeleting) return;
+    setIsDeleting(true);
     try { await deleteRecord(deleteId); addToast('Record deleted.','success'); }
     catch { addToast('Failed to delete.','error'); }
-    finally { setDeleteId(null); }
+    finally { setDeleteId(null); setIsDeleting(false); }
   }
 
   const openAdd  = ()    => { setEditRecord(null); setFormOpen(true); };
@@ -297,7 +300,7 @@ export default function RecordsPage() {
             <table className="w-full text-xs min-w-[900px]">
               <thead>
                 <tr style={{ background:`linear-gradient(135deg,${C.p1},${C.deep})` }}>
-                  {['#','Name of Establishment','Municipality / Province','Reg. No.','Nature of Business','Registration','LTO','Validity','Actions'].map((h,i)=>(
+                  {['#','Name of Establishment','Municipality / Province / Barangay','Reg. No.','Nature of Business','Registration','LTO','Validity','Actions'].map((h,i)=>(
                     <th
                       key={i}
                       className={`px-4 py-3 font-semibold whitespace-nowrap text-white ${i>4?'text-center':'text-left'}`}
@@ -320,8 +323,21 @@ export default function RecordsPage() {
                       {rec.sex&&<p className="text-[10px] mt-0.5" style={{ color:C.p2 }}>{rec.sex}</p>}
                     </td>
                     <td className="px-4 py-3" style={{ borderRight:`1px solid ${softBorder}` }}>
-                      <p className="font-medium" style={{ color:C.p1 }}>{rec.municipality}</p>
-                      <p className="text-[10px]" style={{ color:C.p2 }}>{rec.province}</p>
+                      {(() => {
+                        const line1 = [rec.brgy, rec.municipality].filter(Boolean).join(', ');
+                        return (
+                          <div className="flex flex-col leading-tight">
+                            <p
+                              className="font-medium text-[11px] truncate"
+                              style={{ color: line1 ? C.p1 : C.p3, maxWidth: 220 }}
+                              title={line1 || ''}
+                            >
+                              {line1 || '—'}
+                            </p>
+                            <p className="text-[10px]" style={{ color:C.p2 }}>{rec.province || '—'}</p>
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 font-mono" style={{ color:C.dark, borderRight:`1px solid ${softBorder}` }}>{rec.registrationNumber||'—'}</td>
                     <td className="px-4 py-3 max-w-[200px]" style={{ borderRight:`1px solid ${softBorder}` }}>
@@ -404,7 +420,10 @@ export default function RecordsPage() {
         onEdit={()=>openEdit(viewRecord)} />
       <ConfirmDialog isOpen={!!deleteId} title="Delete Record"
         message="Are you sure you want to permanently delete this record? This cannot be undone."
-        confirmLabel="Delete" onConfirm={handleDelete} onCancel={()=>setDeleteId(null)} />
+        confirmLabel="Delete"
+        isLoading={isDeleting}
+        onConfirm={handleDelete}
+        onCancel={()=>setDeleteId(null)} />
     </div>
   );
 }

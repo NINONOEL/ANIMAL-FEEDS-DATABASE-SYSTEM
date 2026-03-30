@@ -1,35 +1,36 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  collection, getDocs, addDoc, updateDoc, deleteDoc,
-  doc, query, orderBy, serverTimestamp,
+  collection, addDoc, updateDoc, deleteDoc,
+  doc, query, orderBy, serverTimestamp, onSnapshot,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
 const COLLECTION = 'animalFeeds';
 
 export function useRecords() {
-  const [records, setRecords]   = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState(null);
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
 
-  const fetchRecords = useCallback(async () => {
+  useEffect(() => {
     setLoading(true);
-    setError(null);
-    try {
-      const q = query(collection(db, COLLECTION), orderBy('createdAt', 'desc'));
-      const snap = await getDocs(q);
-      const allRecords = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // Hide expired records from the UI based on validity date.
-      const activeRecords = allRecords.filter(r => !isExpiredByValidity(r.validity));
-      setRecords(activeRecords);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    const q = query(collection(db, COLLECTION), orderBy('createdAt', 'desc'));
 
-  useEffect(() => { fetchRecords(); }, [fetchRecords]);
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setRecords(all.filter(r => !isExpiredByValidity(r.validity)));
+        setLoading(false);
+      },
+      (err) => {
+        setError(err.message);
+        setLoading(false);
+      },
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   const addRecord = useCallback(async (data) => {
     const docRef = await addDoc(collection(db, COLLECTION), {
@@ -37,24 +38,21 @@ export function useRecords() {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-    await fetchRecords();
     return docRef.id;
-  }, [fetchRecords]);
+  }, []);
 
   const updateRecord = useCallback(async (id, data) => {
     await updateDoc(doc(db, COLLECTION, id), {
       ...data,
       updatedAt: serverTimestamp(),
     });
-    await fetchRecords();
-  }, [fetchRecords]);
+  }, []);
 
   const deleteRecord = useCallback(async (id) => {
     await deleteDoc(doc(db, COLLECTION, id));
-    await fetchRecords();
-  }, [fetchRecords]);
+  }, []);
 
-  return { records, loading, error, fetchRecords, addRecord, updateRecord, deleteRecord };
+  return { records, loading, error, addRecord, updateRecord, deleteRecord };
 }
 
 function isExpiredByValidity(validity) {

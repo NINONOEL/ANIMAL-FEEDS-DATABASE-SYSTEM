@@ -2,7 +2,7 @@ import { Icon } from '@iconify/react';
 import { createPortal } from 'react-dom';
 import { C } from '../../data/colors';
 
-export default function ConfirmDialog({ isOpen, onConfirm, onCancel, title, message, confirmLabel = 'Delete' }) {
+export default function ConfirmDialog({ isOpen, onConfirm, onCancel, title, message, confirmLabel = 'Delete', isLoading = false }) {
   if (!isOpen) return null;
   const dialogNode = (
     <div
@@ -25,6 +25,7 @@ export default function ConfirmDialog({ isOpen, onConfirm, onCancel, title, mess
 
         <div className="flex gap-3">
           <button onClick={onCancel}
+            disabled={isLoading}
             className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-white transition-colors"
             style={{ border: `1px solid ${C.p3}`, color: C.p1 }}
             onMouseEnter={e => e.currentTarget.style.background = C.bg}
@@ -32,9 +33,16 @@ export default function ConfirmDialog({ isOpen, onConfirm, onCancel, title, mess
             Cancel
           </button>
           <button onClick={onConfirm}
+            disabled={isLoading}
             className="flex-1 px-4 py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-90 transition-opacity"
             style={{ background: `linear-gradient(135deg, ${C.p1}, ${C.deep})` }}>
-            {confirmLabel}
+            {isLoading ? (
+              <span className="inline-flex items-center justify-center gap-2">
+                <Icon icon="mdi:loading" className="animate-spin" /> Deleting...
+              </span>
+            ) : (
+              confirmLabel
+            )}
           </button>
         </div>
       </div>
