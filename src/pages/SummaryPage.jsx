@@ -3,7 +3,7 @@ import { Icon } from '@iconify/react';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
          BarChart, Bar, XAxis, YAxis, CartesianGrid, LabelList } from 'recharts';
 import { useRecords } from '../hooks/useRecords';
-import { PROVINCES, NATURE_OF_BUSINESS_TYPES } from '../data/constants';
+import { PROVINCES, MUNICIPALITIES, NATURE_OF_BUSINESS_TYPES } from '../data/constants';
 import { C, PROV_GRAD, PIE_COLORS, REG_PIE, LTO_PIE } from '../data/colors';
 
 const STRONG_BORDER = C.p2;
@@ -257,12 +257,51 @@ function Box3DBar({ x, y, width, height, fill }) {
 export default function SummaryPage() {
   const { records, loading } = useRecords();
 
+  function normalizeToken(s) {
+    return String(s ?? '')
+      .toUpperCase()
+      .replace(/\./g, '')
+      .replace(/,/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function getProvinceForRecord(r, muniToProvinceMap) {
+    const p = normalizeToken(r?.province);
+    if (p && PROVINCES.map(normalizeToken).includes(p)) {
+      const raw = PROVINCES.find(prov => normalizeToken(prov) === p);
+      return raw || null;
+    }
+
+    const muni = normalizeToken(r?.municipality);
+    if (!muni) return null;
+
+    const direct = muniToProvinceMap[muni];
+    if (direct) return direct;
+
+    // Fallback: tolerant "includes" matching on municipality tokens
+    for (const key of Object.keys(muniToProvinceMap)) {
+      if (!key) continue;
+      if (key.includes(muni) || muni.includes(key)) return muniToProvinceMap[key];
+    }
+
+    return null;
+  }
+
   // Single pass: compute all stats + group records by province + NOB totals
   const { stats, byProvince, nobTotals } = useMemo(() => {
     let retailer = 0, distributor = 0, dealer = 0;
     let newReg = 0, renew = 0, updated = 0, expired = 0;
     const provMap = Object.fromEntries(PROVINCES.map(p => [p, []]));
     const nobMap  = Object.fromEntries(NATURE_OF_BUSINESS_TYPES.map(n => [n.key, 0]));
+    const muniToProvinceMap = {};
+    for (const prov of PROVINCES) {
+      for (const muni of (MUNICIPALITIES[prov] || [])) {
+        const k = normalizeToken(muni);
+        if (!k) continue;
+        muniToProvinceMap[k] = prov;
+      }
+    }
 
     for (const r of records) {
       retailer    += Number(r.feedRetailer)    || 0;
@@ -272,7 +311,8 @@ export default function SummaryPage() {
       else if (r.registration === 'renew') renew++;
       if (r.lto === 'updated')   updated++;
       else if (r.lto === 'expired')  expired++;
-      if (provMap[r.province])   provMap[r.province].push(r);
+      const derivedProvince = getProvinceForRecord(r, muniToProvinceMap);
+      if (derivedProvince && provMap[derivedProvince]) provMap[derivedProvince].push(r);
       for (const n of NATURE_OF_BUSINESS_TYPES) nobMap[n.key] += Number(r[n.key]) || 0;
     }
 

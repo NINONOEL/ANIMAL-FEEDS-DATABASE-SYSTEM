@@ -114,7 +114,13 @@ function Btn({ children, primary, outline, onClick, disabled }) {
 
 /* ── main page ─────────────────────────────────────────────── */
 export default function RecordsPage() {
-  const { records, loading, addRecord, updateRecord, deleteRecord } = useRecords();
+  const {
+    records,
+    loading,
+    addRecord,
+    updateRecord,
+    deleteRecord,
+  } = useRecords();
   const { addToast } = useToast();
 
   const [search,setSearch]                             = useState('');
@@ -129,6 +135,7 @@ export default function RecordsPage() {
   const [viewOpen,setViewOpen]                         = useState(false);
   const [deleteId,setDeleteId]                         = useState(null);
   const [isDeleting,setIsDeleting]                    = useState(false);
+  // (intentionally no bulk import / clear province controls)
 
   const munis = filterProvince ? (MUNICIPALITIES[filterProvince]||[]) : [];
 
@@ -236,11 +243,13 @@ export default function RecordsPage() {
               onBlur={e=>e.target.style.borderColor=strongBorder}
             />
           </div>
-          <button onClick={openAdd}
-            className="flex items-center gap-2 px-5 py-2.5 text-white text-sm font-semibold rounded-xl shadow-md flex-shrink-0 hover:opacity-90 transition-opacity"
-            style={{ background:`linear-gradient(135deg,${C.p1},${C.deep})` }}>
-            <Icon icon="mdi:plus" className="text-lg" /> Add Record
-          </button>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button onClick={openAdd}
+              className="flex items-center gap-2 px-5 py-2.5 text-white text-sm font-semibold rounded-xl shadow-md flex-shrink-0 hover:opacity-90 transition-opacity"
+              style={{ background:`linear-gradient(135deg,${C.p1},${C.deep})` }}>
+              <Icon icon="mdi:plus" className="text-lg" /> Add Record
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-3 items-center">
