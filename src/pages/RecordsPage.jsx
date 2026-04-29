@@ -135,7 +135,6 @@ export default function RecordsPage() {
   const [viewOpen,setViewOpen]                         = useState(false);
   const [deleteId,setDeleteId]                         = useState(null);
   const [isDeleting,setIsDeleting]                    = useState(false);
-  // (intentionally no bulk import / clear province controls)
 
   const munis = filterProvince ? (MUNICIPALITIES[filterProvince]||[]) : [];
 
@@ -176,7 +175,6 @@ export default function RecordsPage() {
     catch { addToast('Failed to delete.','error'); }
     finally { setDeleteId(null); setIsDeleting(false); }
   }
-
   const openAdd  = ()    => { setEditRecord(null); setFormOpen(true); };
   const openEdit = (rec) => { setEditRecord(rec);  setFormOpen(true); };
   const openView = (rec) => { setViewRecord(rec);  setViewOpen(true); };

@@ -1,6 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Icon } from '@iconify/react';
-import * as XLSX from 'xlsx';
 import { PROVINCES, MUNICIPALITIES, NATURE_OF_BUSINESS_TYPES } from '../../data/constants';
 import { C } from '../../data/colors';
 import Modal from '../ui/Modal';
@@ -38,7 +37,16 @@ const EMPTY = {
   remarks: '',
 };
 
-const REQUIRED_FIELDS = ['nameOfEstablishment', 'province', 'municipality', 'brgy', 'registration', 'lto'];
+// User-requested minimal import fields from legacy Excel.
+const REQUIRED_FIELDS = [
+  'nameOfEstablishment',
+  'addressLine',
+  'registrationNumber',
+  'orNumber',
+  'orDate',
+  'fee',
+  'validity',
+];
 
 function compactKey(s) {
   return String(s ?? '')
@@ -301,20 +309,6 @@ const KEY_ALIASES = (() => {
   alias('Feed Indentor', 'feedIndentor');
   alias('Feed Exporter', 'feedExporter');
 
-  // Masterlist abbreviations:
-  // R=Retailer, D=Distributor, DL=Dealer, IM=Importer, M=Manufacturer, S=Supplier, EX=Exporter, IN=Indentor, ING. M=Ingredients Manufacturer
-  alias('R', 'feedRetailer');
-  alias('D', 'feedDistributor');
-  alias('DL', 'feedDealer');
-  alias('IM', 'feedImporter');
-  alias('M', 'manufacturer');
-  alias('S', 'feedSupplier');
-  alias('EX', 'feedExporter');
-  alias('IN', 'feedIndentor');
-  alias('ING. M', 'feedIngredientsMfr');
-  alias('ING M', 'feedIngredientsMfr');
-  alias('ING.M', 'feedIngredientsMfr');
-
   // Direct key match fallback (camelCase)
   for (const k of ['nameOfEstablishment', 'brgy', 'municipality', 'province', 'sex', 'registrationNumber',
     'manufacturer', 'feedIngredientsMfr', 'feedRetailer', 'feedDistributor', 'feedDealer',
@@ -330,18 +324,7 @@ function buildHeaderToFieldMap(headers) {
   const headerToField = {};
   headers.forEach(h => {
     const ck = compactKey(h);
-    let field = KEY_ALIASES[ck];
-
-    // Fallback: tolerate headers with extra text (e.g. "Registration (New/Renew)").
-    if (!field) {
-      for (const [aliasKey, aliasField] of Object.entries(KEY_ALIASES)) {
-        if (ck === aliasKey || ck.startsWith(aliasKey) || ck.includes(aliasKey)) {
-          field = aliasField;
-          break;
-        }
-      }
-    }
-
+    const field = KEY_ALIASES[ck];
     if (field) headerToField[h] = field;
   });
   return headerToField;
@@ -349,6 +332,11 @@ function buildHeaderToFieldMap(headers) {
 
 function validateRecord(record) {
   const missing = REQUIRED_FIELDS.filter(k => {
+    if (k === 'addressLine') {
+      // COMPLETE ADDRESS is treated as present if any location part was parsed.
+      const hasAddress = [record.brgy, record.municipality, record.province].some(v => String(v ?? '').trim() !== '');
+      return !hasAddress;
+    }
     const v = record[k];
     return v == null || String(v).trim() === '';
   });
@@ -442,7 +430,128 @@ function parseTSVToAoa(text) {
   const normalized = String(text ?? '').replace(/\r/g, '');
   // Keep empty lines as rows so column alignment stays predictable.
   const lines = normalized.split('\n');
-  return lines.map(line => line.split('\t'));
+
+  const hasTabs = lines.some(line => line.includes('\t'));
+  if (hasTabs) return lines.map(line => line.split('\t'));
+
+  // Fallback: support fixed-width copy/paste where columns are separated by 2+ spaces.
+  return lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return [''];
+    return trimmed.split(/\s{2,}/g);
+  });
+}
+
+function isDateLike(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return false;
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) return true;
+  if (/^(JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)\s+\d{1,2},\s*\d{4}$/i.test(s)) return true;
+  return false;
+}
+
+function isLikelyValidity(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return false;
+  if (/^N\/A$/i.test(s)) return true;
+  if (/^DECEM(BER|NBER)\s+\d{1,2},\s*\d{4}$/i.test(s)) return true;
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) return true;
+  return false;
+}
+
+function parseLegacyMasterlistRows(text) {
+  const lines = String(text ?? '').replace(/\r/g, '').split('\n');
+  const out = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    // Keep only detail rows (usually start with item number).
+    if (!/^\d+\s+/.test(line)) continue;
+
+    let cols = rawLine.split('\t').map(c => String(c ?? '').trim());
+    // If no tabs were captured, fallback to 2+ spaces split.
+    if (cols.length <= 1) {
+      cols = line.split(/\s{2,}/g).map(c => String(c ?? '').trim());
+    }
+    if (cols.length < 3) continue;
+
+    // Row format expected (minimum):
+    // [No, Name, Address, ...]
+    const name = cols[1] || '';
+    const address = cols[2] || '';
+    if (!name || !address) continue;
+
+    // Registration number usually at index 4 in tab-layout, but
+    // when spacing-based split differs, choose first plausible token after address.
+    let registrationNumber = cols[4] || '';
+    if (!registrationNumber) {
+      for (let i = 3; i < Math.min(cols.length, 10); i++) {
+        const c = cols[i];
+        if (!c) continue;
+        if (isDateLike(c) || isLikelyValidity(c)) continue;
+        if (/^₱/.test(c)) continue;
+        if (/^\d+$/.test(c) && c.length <= 2) continue; // likely flag columns
+        registrationNumber = c;
+        break;
+      }
+    }
+    let orNumber = '';
+    let orDate = '';
+    let fee = '';
+    let validity = '';
+
+    // Scan trailing columns for OR/date/fee/validity patterns.
+    for (let i = 5; i < cols.length; i++) {
+      const c = cols[i];
+      if (!c) continue;
+
+      if (!orDate && isDateLike(c)) {
+        orDate = c;
+        continue;
+      }
+
+      if (!fee && (/₱/.test(c) || /^\d+(\.\d{1,2})?$/.test(c))) {
+        fee = c;
+        continue;
+      }
+
+      if (!validity && isLikelyValidity(c)) {
+        validity = c;
+      }
+    }
+
+    // If there is an OR date, take nearest previous non-empty cell as OR number.
+    if (orDate) {
+      const dateIdx = cols.findIndex(c => String(c ?? '').trim() === orDate);
+      for (let j = dateIdx - 1; j >= 0; j--) {
+        const c = cols[j];
+        if (!c) continue;
+        if (c === registrationNumber) continue;
+        if (isDateLike(c) || isLikelyValidity(c)) continue;
+        if (/^\d+$/.test(c) && c.length <= 2) continue; // likely status flags
+        orNumber = c;
+        break;
+      }
+    }
+
+    out.push({
+      ...EMPTY,
+      nameOfEstablishment: name,
+      brgy: '',
+      municipality: '',
+      province: '',
+      registrationNumber,
+      orNumber,
+      orDate: normalizeDateInput(orDate),
+      fee: toNullableMoney(fee),
+      validity: normalizeDateInput(validity) || validity || '',
+      registration: '',
+      lto: '',
+    });
+  }
+
+  return out;
 }
 
 function parseAoATable(aoa) {
@@ -461,22 +570,7 @@ function parseAoATable(aoa) {
 
     const headerToField = buildHeaderToFieldMap(headers);
     const mappedFields = new Set(Object.values(headerToField));
-    const hasAddressLine = mappedFields.has('addressLine');
-
-    const requiredFound = REQUIRED_FIELDS.reduce((acc, k) => {
-      if (k === 'province' || k === 'municipality' || k === 'brgy') {
-        return acc + (hasAddressLine || mappedFields.has(k) ? 1 : 0);
-      }
-      if (k === 'registration') {
-        const ok = mappedFields.has('registration') || mappedFields.has('regNew') || mappedFields.has('regRenew');
-        return acc + (ok ? 1 : 0);
-      }
-      if (k === 'lto') {
-        const ok = mappedFields.has('lto') || mappedFields.has('ltoUpdated') || mappedFields.has('ltoExpired');
-        return acc + (ok ? 1 : 0);
-      }
-      return acc + (mappedFields.has(k) ? 1 : 0);
-    }, 0);
+    const requiredFound = REQUIRED_FIELDS.reduce((acc, k) => acc + (mappedFields.has(k) ? 1 : 0), 0);
 
     if (requiredFound > bestScore) {
       bestScore = requiredFound;
@@ -517,10 +611,31 @@ function parseAoATable(aoa) {
 
   const maxCols = Math.max(headerRow.length, statusRow.length);
   const headerCellsForMapping = Array.from(new Set([...headerRow, ...statusRow].filter(h => h)));
-  const headerToField = buildHeaderToFieldMap(headerCellsForMapping);
+  let headerToField = buildHeaderToFieldMap(headerCellsForMapping);
 
+  // Fallback for headerless paste:
+  // If no recognizable headers are found, assume the first 7 columns are in user-defined order:
+  // NAME OF ESTABLISHMENT, COMPLETE ADDRESS, REGISTRATION NUMBER, OR NUMBER, OR DATE, FEE, VALIDITY
+  const HEADERLESS_ORDER = [
+    'nameOfEstablishment',
+    'addressLine',
+    'registrationNumber',
+    'orNumber',
+    'orDate',
+    'fee',
+    'validity',
+  ];
+  let isHeaderlessMode = false;
   if (Object.keys(headerToField).length === 0) {
-    throw new Error('Could not detect headers. Ensure headers include Name of Establishment, COMPLETE ADDRESS, New/Renew, Updated/Expired.');
+    const hasAnyRowWithSevenCols = aoa.some(row => Array.isArray(row) && row.length >= 7);
+    if (hasAnyRowWithSevenCols) {
+      isHeaderlessMode = true;
+      headerToField = {};
+    }
+  }
+
+  if (!isHeaderlessMode && Object.keys(headerToField).length === 0) {
+    throw new Error('Could not detect headers. Ensure headers include NAME OF ESTABLISHMENT, COMPLETE ADDRESS, REGISTRATION NUMBER, OR NUMBER, OR DATE, FEE, VALIDITY.');
   }
 
   const mergedHeaders = Array.from({ length: maxCols }, (_, c) => {
@@ -534,7 +649,9 @@ function parseAoATable(aoa) {
   const normalized = [];
   const bad = [];
 
-  const dataStartRow = Math.max(headerRowIdx, statusHeaderIdx >= 0 ? statusHeaderIdx : headerRowIdx) + 1;
+  const dataStartRow = isHeaderlessMode
+    ? 0
+    : Math.max(headerRowIdx, statusHeaderIdx >= 0 ? statusHeaderIdx : headerRowIdx) + 1;
 
   for (let r = dataStartRow; r < aoa.length; r++) {
     const row = aoa[r] || [];
@@ -542,13 +659,34 @@ function parseAoATable(aoa) {
     if (!anyValue) continue;
 
     const rowObj = {};
-    for (let c = 0; c < mergedHeaders.length; c++) {
-      const header = mergedHeaders[c];
-      if (!header) continue;
-      rowObj[header] = row[c] ?? '';
+    if (isHeaderlessMode) {
+      for (let c = 0; c < HEADERLESS_ORDER.length; c++) {
+        const fieldKey = HEADERLESS_ORDER[c];
+        if (!fieldKey) continue;
+        rowObj[fieldKey] = row[c] ?? '';
+      }
+    } else {
+      for (let c = 0; c < mergedHeaders.length; c++) {
+        const header = mergedHeaders[c];
+        if (!header) continue;
+        rowObj[header] = row[c] ?? '';
+      }
     }
 
-    const rec = normalizeRowToRecord(rowObj, headerToField);
+    const rec = isHeaderlessMode
+      ? normalizeRowToRecord(
+          rowObj,
+          {
+            nameOfEstablishment: 'nameOfEstablishment',
+            addressLine: 'addressLine',
+            registrationNumber: 'registrationNumber',
+            orNumber: 'orNumber',
+            orDate: 'orDate',
+            fee: 'fee',
+            validity: 'validity',
+          },
+        )
+      : normalizeRowToRecord(rowObj, headerToField);
     const v = validateRecord(rec);
     if (!v.ok) {
       bad.push({ row: r + 1, reason: `Missing: ${v.missing.join(', ')}` });
@@ -575,10 +713,14 @@ function parseAoATable(aoa) {
   };
 }
 
+function applyProvinceScope(rows, province) {
+  if (!province) return rows;
+  return rows.map((r) => ({ ...r, province }));
+}
+
 export default function BulkImportModal({ isOpen, onClose, bulkImportRecords }) {
   const { addToast } = useToast();
 
-  const [fileName, setFileName] = useState('');
   const [rowsPreview, setRowsPreview] = useState([]);
   const [importable, setImportable] = useState([]);
   const [skipped, setSkipped] = useState([]);
@@ -586,68 +728,35 @@ export default function BulkImportModal({ isOpen, onClose, bulkImportRecords }) 
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState({ imported: 0, total: 0 });
   const [pasteText, setPasteText] = useState('');
+  const [provinceScope, setProvinceScope] = useState('');
 
   useEffect(() => {
     if (!isOpen) return;
     // reset when opened so user can import another file easily
-    setFileName('');
     setRowsPreview([]);
     setImportable([]);
     setSkipped([]);
     setParsing(false);
     setImporting(false);
     setProgress({ imported: 0, total: 0 });
+    setProvinceScope('');
   }, [isOpen]);
 
   const expectedHeaderHints = useMemo(() => ([
-    'Name of Establishment',
-    'COMPLETE ADDRESS (auto-split to province/municipality/barangay)',
-    'New / Renew (Registration status)',
-    'Updated / Expired (LTO status)',
+    'NAME OF ESTABLISHMENT',
+    'COMPLETE ADDRESS',
+    'REGISTRATION NUMBER',
+    'OR NUMBER',
+    'OR DATE',
+    'FEE',
+    'VALIDITY',
   ]), []);
-
-  async function handleFile(file) {
-    if (!file) return;
-    setFileName(file.name);
-    setParsing(true);
-    setRowsPreview([]);
-    setImportable([]);
-    setSkipped([]);
-    setProgress({ imported: 0, total: 0 });
-
-    try {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-
-      // Read as array-of-arrays so we can detect the real header row.
-      // (If your Excel has a title row on top, the first row won't be headers.)
-      const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-      const { normalized, bad, rowsPreview } = parseAoATable(aoa);
-
-      setRowsPreview(rowsPreview);
-      setImportable(normalized);
-      setSkipped(bad);
-
-      if (normalized.length === 0) {
-        addToast('No rows found from your Excel/paste after parsing.', 'error');
-      } else {
-        addToast(`Imported ${normalized.length} records (${bad.length} with issues).`, 'success');
-      }
-    } catch (err) {
-      addToast(err?.message ? `Import failed: ${err.message}` : 'Import failed.', 'error');
-    } finally {
-      setParsing(false);
-    }
-  }
 
   function handlePasteParse() {
     if (!pasteText.trim()) {
       addToast('Paste some records first.', 'error');
       return;
     }
-    setFileName('Pasted Records');
     setParsing(true);
     setRowsPreview([]);
     setImportable([]);
@@ -656,15 +765,47 @@ export default function BulkImportModal({ isOpen, onClose, bulkImportRecords }) 
 
     try {
       const aoa = parseTSVToAoa(pasteText);
-      const { normalized, bad, rowsPreview } = parseAoATable(aoa);
-      setRowsPreview(rowsPreview);
-      setImportable(normalized);
-      setSkipped(bad);
+      let normalized = [];
+      let bad = [];
+      let rowsPreview = [];
+
+      try {
+        const parsed = parseAoATable(aoa);
+        normalized = parsed.normalized;
+        bad = parsed.bad;
+        rowsPreview = parsed.rowsPreview;
+      } catch {
+        // Continue to legacy fallback parser below.
+      }
 
       if (normalized.length === 0) {
+        const legacyRows = parseLegacyMasterlistRows(pasteText);
+        normalized = legacyRows;
+        rowsPreview = legacyRows.slice(0, 5).map(n => ({
+          nameOfEstablishment: n.nameOfEstablishment,
+          province: n.province,
+          municipality: n.municipality,
+          brgy: n.brgy,
+          registrationNumber: n.registrationNumber,
+        }));
+        bad = [];
+      }
+
+      const scopedRows = applyProvinceScope(normalized, provinceScope);
+      setRowsPreview(scopedRows.slice(0, 5).map(n => ({
+        nameOfEstablishment: n.nameOfEstablishment,
+        province: n.province,
+        municipality: n.municipality,
+        brgy: n.brgy,
+        registrationNumber: n.registrationNumber,
+      })));
+      setImportable(scopedRows);
+      setSkipped(bad);
+
+      if (scopedRows.length === 0) {
         addToast('No rows found from your pasted text after parsing.', 'error');
       } else {
-        addToast(`Imported ${normalized.length} records (${bad.length} with issues).`, 'success');
+        addToast(`Parsed ${scopedRows.length} records (${bad.length} with issues).`, 'success');
       }
     } catch (err) {
       addToast(err?.message ? `Parse failed: ${err.message}` : 'Parse failed.', 'error');
@@ -699,38 +840,32 @@ export default function BulkImportModal({ isOpen, onClose, bulkImportRecords }) 
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Bulk Import (Excel)"
-      subtitle="Upload an .xlsx/.xls file. First row should contain headers."
+      title="Bulk Import (Paste)"
+      subtitle="Paste copied rows (tab-separated) with header row."
       size="md"
     >
       <div className="space-y-4">
-        <div className="rounded-xl p-4" style={{ border: `1.5px solid ${C.p3}`, background: C.white }}>
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-bold uppercase tracking-wide" style={{ color: C.p1 }}>
-                Excel file
-              </p>
-              <p className="text-sm font-medium mt-1" style={{ color: C.text }}>
-                {fileName || 'No file selected'}
-              </p>
-            </div>
-            <label
-              className="px-4 py-2.5 rounded-xl text-white text-sm font-semibold cursor-pointer shadow-md flex items-center gap-2"
-              style={{ background: `linear-gradient(135deg, ${C.p1}, ${C.deep})` }}
-            >
-              <Icon icon="mdi:upload" className="text-lg" />
-              Choose file
-              <input
-                type="file"
-                accept=".xlsx,.xls"
-                className="hidden"
-                disabled={parsing || importing}
-                onChange={(e) => handleFile(e.target.files?.[0])}
-              />
-            </label>
-          </div>
+        <div className="rounded-xl p-4" style={{ border: `1.5px solid ${C.p3}`, background: C.bg }}>
+          <p className="text-xs font-bold uppercase tracking-wide" style={{ color: C.p1 }}>
+            Province scope (optional)
+          </p>
+          <p className="text-xs mt-1" style={{ color: C.p2 }}>
+            If selected, this province will be applied to all parsed rows (best for per-province paste/import).
+          </p>
+          <select
+            value={provinceScope}
+            onChange={(e) => setProvinceScope(e.target.value)}
+            disabled={parsing || importing}
+            className="w-full mt-3 text-sm rounded-lg px-3 py-2"
+            style={{ border: `1px solid ${C.p3}`, background: C.white, color: C.text, outline: 'none' }}
+          >
+            <option value="">Use province from Excel data</option>
+            {PROVINCES.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
 
-          <div className="mt-3 text-xs" style={{ color: C.p2 }}>
+        <div className="rounded-xl p-4" style={{ border: `1.5px solid ${C.p3}`, background: C.white }}>
+          <div className="mt-1 text-xs" style={{ color: C.p2 }}>
             Required columns: {expectedHeaderHints.join(', ')}.
           </div>
 
@@ -740,7 +875,7 @@ export default function BulkImportModal({ isOpen, onClose, bulkImportRecords }) 
           <textarea
             value={pasteText}
             onChange={(e) => setPasteText(e.target.value)}
-            placeholder="Copy from Excel (including the header row), then paste here. Tab-separated values are supported."
+            placeholder="Paste copied rows here. Tab-separated is best, but 2+ spaces between columns is also supported."
             rows={8}
             className="w-full mt-2 text-sm rounded-lg px-3 py-2"
             style={{ border: `1px solid ${C.p3}`, background: C.bg, color: C.text, outline: 'none', resize: 'vertical' }}
@@ -762,7 +897,7 @@ export default function BulkImportModal({ isOpen, onClose, bulkImportRecords }) 
           {(parsing || importing) && (
             <div className="mt-3 flex items-center gap-2 text-xs font-semibold" style={{ color: C.p1 }}>
               <Icon icon="mdi:loading" className="animate-spin" />
-              {importing ? `Importing... ${progress.imported}/${progress.total}` : 'Parsing Excel...'}
+              {importing ? `Importing... ${progress.imported}/${progress.total}` : 'Parsing pasted data...'}
             </div>
           )}
         </div>

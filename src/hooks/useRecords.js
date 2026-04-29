@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   collection, addDoc, updateDoc, deleteDoc,
-  doc, query, orderBy, serverTimestamp, onSnapshot, writeBatch,
+  doc, query, orderBy, serverTimestamp, onSnapshot,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
@@ -54,32 +54,6 @@ export function useRecords() {
     await deleteDoc(doc(db, COLLECTION, id));
   }, []);
 
-  const bulkImportRecords = useCallback(async (rows, { chunkSize = 400, onProgress } = {}) => {
-    if (!Array.isArray(rows) || rows.length === 0) return { imported: 0 };
-
-    let imported = 0;
-    for (let i = 0; i < rows.length; i += chunkSize) {
-      const batch = writeBatch(db);
-      const chunk = rows.slice(i, i + chunkSize);
-
-      const colRef = collection(db, COLLECTION);
-      chunk.forEach((data) => {
-        const ref = doc(colRef); // auto id
-        batch.set(ref, {
-          ...data,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      });
-
-      await batch.commit();
-      imported += chunk.length;
-      onProgress?.({ imported, total: rows.length, currentChunk: Math.floor(i / chunkSize) + 1 });
-    }
-
-    return { imported };
-  }, []);
-
   return {
     records,
     loading,
@@ -87,7 +61,6 @@ export function useRecords() {
     addRecord,
     updateRecord,
     deleteRecord,
-    bulkImportRecords,
   };
 }
 

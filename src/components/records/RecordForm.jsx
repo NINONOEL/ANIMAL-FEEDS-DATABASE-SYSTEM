@@ -125,8 +125,6 @@ export default function RecordForm({ isOpen, onClose, onSave, initialData, isEdi
     if (!form.province)                  e.province='Required';
     if (!form.municipality)              e.municipality='Required';
     if (!form.brgy)                      e.brgy='Required';
-    if (!form.registration)              e.registration='Required';
-    if (!form.lto)                       e.lto='Required';
     setErrors(e);
     return Object.keys(e).length===0;
   }
@@ -255,12 +253,15 @@ export default function RecordForm({ isOpen, onClose, onSave, initialData, isEdi
                 placeholder="0.00" className={cls} style={base} />
             </Field>
 
-            <Field label="Registration" required error={errors.registration}>
+            <Field label="Registration" error={errors.registration}>
               <div className="flex gap-4 mt-1">
                 {[{v:'new',l:'New'},{v:'renew',l:'Renew'}].map(opt=>(
                   <label key={opt.v} className="flex items-center gap-2 cursor-pointer">
                     <input type="radio" name="registration" value={opt.v}
                       checked={form.registration===opt.v} onChange={()=>set('registration',opt.v)}
+                      onClick={() => {
+                        if (form.registration === opt.v) set('registration', '');
+                      }}
                       className="w-4 h-4" style={{ accentColor:C.p1 }} />
                     <span className="text-sm font-semibold" style={{ color:C.text }}>{opt.l}</span>
                   </label>
@@ -268,12 +269,15 @@ export default function RecordForm({ isOpen, onClose, onSave, initialData, isEdi
               </div>
             </Field>
 
-            <Field label="LTO" required error={errors.lto}>
+            <Field label="LTO" error={errors.lto}>
               <div className="flex gap-4 mt-1">
                 {[{v:'updated',l:'Updated'},{v:'expired',l:'Expired'}].map(opt=>(
                   <label key={opt.v} className="flex items-center gap-2 cursor-pointer">
                     <input type="radio" name="lto" value={opt.v}
                       checked={form.lto===opt.v} onChange={()=>set('lto',opt.v)}
+                      onClick={() => {
+                        if (form.lto === opt.v) set('lto', '');
+                      }}
                       className="w-4 h-4" style={{ accentColor:C.p1 }} />
                     <span className="text-sm font-semibold" style={{ color:C.text }}>{opt.l}</span>
                   </label>
